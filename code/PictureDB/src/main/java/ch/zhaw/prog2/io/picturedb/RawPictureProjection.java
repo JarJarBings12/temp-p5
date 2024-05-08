@@ -82,6 +82,7 @@ public final class RawPictureProjection {
     }
 
     public void updateRowFromPicture(Picture picture) {
+        rawPicture[pictureIdIdx]        = String.valueOf(picture.getId());
         rawPicture[pictureUrlIdx]       = picture.getUrl().toString();
         rawPicture[pictureTitleIdx]     = picture.getTitle();
         rawPicture[pictureLongitudeIdx] = String.valueOf(picture.getLongitude());

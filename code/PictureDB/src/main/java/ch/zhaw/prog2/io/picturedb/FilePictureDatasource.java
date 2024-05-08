@@ -1,6 +1,5 @@
 package ch.zhaw.prog2.io.picturedb;
 
-import javax.swing.plaf.basic.BasicDesktopIconUI;
 import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -9,7 +8,6 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.function.BiFunction;
-import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -64,7 +62,7 @@ public class FilePictureDatasource implements PictureDatasource {
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
                 projection.setRow(new String[HEADER_COLUMNS.size()]);
 
-                picture.setId(count() + 1);
+                picture.setId(getHighestId() + 1);
                 projection.updateRowFromPicture(picture);
 
                 bufferedWriter.write(String.join(DELIMITER, projection.getRow()));
@@ -254,12 +252,58 @@ public class FilePictureDatasource implements PictureDatasource {
         }
     }
 
+    private long getHighestId() {
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
+
+            String line = reader.readLine();
+            long highestId = -1;
+            while (line != null) {
+                projection.setRow(line.split(DELIMITER));
+                if (projection.selectId() > highestId) {
+                    highestId = projection.selectId();
+                }
+                line = reader.readLine();
+            }
+            return highestId;
+        } catch (IOException e) {
+            throw new DatasourceException("Error while reading records", e);
+        }
+    }
+
     /**
      * {@inheritDoc}
      */
     @Override
     public Collection<Picture> findByPosition(float longitude, float latitude, float deviation) {
-        // ToDo: Correct Implementation
-        return Collections.emptyList();
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            List<Picture> results = new ArrayList<>();
+
+            final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
+
+            String line = reader.readLine();
+            while (line != null) {
+                projection.setRow(line.split(DELIMITER));
+                if (testCoordinates(longitude, latitude, deviation, projection.selectLongitude(), projection.selectLatitude())) {
+                    results.add(projection.convertToPicture().orElseThrow());
+                }
+                line = reader.readLine();
+            }
+            return results;
+        } catch (IOException e) {
+            throw new DatasourceException("Error while reading records", e);
+        }
+    }
+
+    /**
+     * Retrieves all images close to a certain position.
+     * All images with a deviation from the exact coordinates are returned.
+     * This includes all objects in a square range
+     * from [longitude - deviation / latitude - deviation]
+     * to   [longitude + deviation / latitude + deviation]
+     */
+    private boolean testCoordinates(float longitude, float latitude, float deviation, float testLongitude, float testLatitude) {
+        return testLongitude >= longitude - deviation && testLongitude <= longitude + deviation
+                && testLatitude >= latitude - deviation && testLatitude <= latitude + deviation;
     }
 }
