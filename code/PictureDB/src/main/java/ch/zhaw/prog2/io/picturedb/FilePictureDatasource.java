@@ -1,5 +1,6 @@
 package ch.zhaw.prog2.io.picturedb;
 
+import javax.swing.plaf.basic.BasicDesktopIconUI;
 import java.io.*;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -48,7 +49,28 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public void insert(Picture picture) {
-        // ToDo: Implement
+        Objects.requireNonNull(picture, "picture must not be null");
+
+        try {
+            final File tempFile = Files.createTempFile(filePath.toPath(), "db-", ".tmp").toFile();
+
+            Files.copy(filePath.toPath(), tempFile.toPath());
+            try (BufferedReader reader = new BufferedReader(new FileReader(tempFile));
+                 BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile, true))) {
+
+                List<String> header = readHeader(reader);
+                final RawPictureProjection projection = RawPictureProjection.create(dateFormat, header);
+                projection.setRow(new String[header.size()]);
+
+                picture.setId(count() + 1);
+                projection.updateRowFromPicture(picture);
+
+                writer.write(String.join(DELIMITER, projection.getRow()));
+            }
+            replaceFile(filePath, tempFile);
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**
@@ -57,21 +79,23 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public void update(Picture picture) throws RecordNotFoundException {
+        Objects.requireNonNull(picture, "picture must not be null");
+
         try {
             final File tempFile = Files.createTempFile(filePath.toPath(), "db-", ".tmp").toFile();
 
             try (BufferedReader reader = new BufferedReader(new FileReader(filePath));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
                 List<String> header = readHeader(reader);
-                final RawPictureProjection projection = RawPictureProjection.create(dateFormat, header);
 
+                final RawPictureProjection projection = RawPictureProjection.create(dateFormat, header);
                 copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
-                writer.write("%s;");
+                projection.updateRowFromPicture(picture);
+
+                writer.write(String.join(DELIMITER, projection.getRow()));
                 reader.transferTo(writer);
             }
-            if (!filePath.delete())
-                throw new IllegalStateException("Couldn't delete file: " + filePath);
-            tempFile.renameTo(filePath);
+            replaceFile(filePath, tempFile);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -83,6 +107,8 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public void delete(Picture picture) throws RecordNotFoundException {
+        Objects.requireNonNull(picture, "picture must not be null");
+
         try {
             final File tempFile = Files.createTempFile(filePath.toPath(), "db-", ".tmp").toFile();
 
@@ -94,32 +120,37 @@ public class FilePictureDatasource implements PictureDatasource {
                 copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
                 reader.transferTo(writer);
             }
-            if (!filePath.delete())
-                throw new IllegalStateException("Couldn't delete file: " + filePath);
-            tempFile.renameTo(filePath);
+            replaceFile(filePath, tempFile);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
     }
 
-    private <T> Optional<String[]> copyWhile(BufferedReader reader, BufferedWriter writer, RawPictureProjection projection, T state, BiFunction<RawPictureProjection, T, Boolean> predicate) {
+    /**
+     * Copies the content of the reader to the writer until the predicate is true.
+     * The line matched by the predicate is kept in the {@code projection} so it may be used after the method returns.
+     *
+     * @param reader to read from
+     * @param writer to write to
+     * @param projection to use for reading and writing
+     * @param state to compare against for the predicate
+     * @param predicate to determine when to stop copying
+     * @param <T> type of the state
+     */
+    private <T> void copyWhile(BufferedReader reader, BufferedWriter writer, RawPictureProjection projection, T state, BiFunction<RawPictureProjection, T, Boolean> predicate) {
         try {
             String line = reader.readLine();
-
-            String[] result = null;
             while (line != null) {
                 final String[] rawRow = line.split(DELIMITER);
 
                 projection.setRow(rawRow);
                 if (predicate.apply(projection, state)) {
-                    result = rawRow;
                     break;
                 } else {
                     writer.write(line);
                 }
                 line = reader.readLine();
             }
-            return Optional.ofNullable(result);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -185,6 +216,13 @@ public class FilePictureDatasource implements PictureDatasource {
         }
     }
 
+    private void replaceFile(File original, File newFile) {
+        if (!original.delete())
+            throw new IllegalStateException("Couldn't delete file: " + original);
+        if (!newFile.renameTo(original))
+            throw new IllegalStateException("Couldn't rename file: " + newFile + " to " + original);
+    }
+
     /**
      * {@inheritDoc}
      *
@@ -196,13 +234,14 @@ public class FilePictureDatasource implements PictureDatasource {
     }
 
     private List<String> readHeader(BufferedReader reader) throws IOException {
-        String line = readNextNoneEmptyLine(reader);
-        final List<String> splits = Collections.unmodifiableList(Arrays.asList(line.split(DELIMITER)));
-
-        if (!splits.containsAll(HEADER_COLUMNS)) {
-            throw new IllegalArgumentException("header is missing required columns");
-        }
-        return splits;
+        return Collections.unmodifiableList(HEADER_COLUMNS);
+        //String line = readNextNoneEmptyLine(reader);
+        //final List<String> splits = Collections.unmodifiableList(Arrays.asList(line.split(DELIMITER)));
+//
+        //if (!splits.containsAll(HEADER_COLUMNS)) {
+        //    throw new IllegalArgumentException("header is missing required columns");
+        //}
+        //return splits;
     }
 
     private String readNextNoneEmptyLine(BufferedReader reader) throws IOException {

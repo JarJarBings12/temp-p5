@@ -6,9 +6,10 @@ import java.net.URL;
 import java.text.DateFormat;
 import java.util.Date;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
-public class RawPictureProjection {
+public final class RawPictureProjection {
     private final DateFormat dateFormat;
 
     private final int pictureIdIdx;
@@ -21,10 +22,11 @@ public class RawPictureProjection {
     private String[] rawPicture;
 
 
-    private RawPictureProjection(DateFormat dateFormat, int pictureIdIdx, int pictureDescriptionIdx, int pictureTitleIdx, int pictureFilenameIdx, int pictureLongitudeIdx, int pictureLatitudeIdx, int pictureDateIdx) {
+    private RawPictureProjection(DateFormat dateFormat, int pictureIdIdx, int pictureUrlIdx, int pictureTitleIdx, int pictureLongitudeIdx, int pictureLatitudeIdx, int pictureDateIdx) {
         this.dateFormat             = dateFormat;
+
         this.pictureIdIdx           = pictureIdIdx;
-        this.pictureUrlIdx          = pictureDescriptionIdx;
+        this.pictureUrlIdx          = pictureUrlIdx;
         this.pictureTitleIdx        = pictureTitleIdx;
         this.pictureLongitudeIdx    = pictureLongitudeIdx;
         this.pictureLatitudeIdx     = pictureLatitudeIdx;
@@ -32,62 +34,77 @@ public class RawPictureProjection {
     }
 
 
+    public void setRow(String[] split) {
+        Objects.requireNonNull(split);
+        this.rawPicture = split;
+    }
+
+    public String[] getRow() {
+        return rawPicture;
+    }
+
+
     public long selectId() {
-        return Long.parseLong(rawPicture[pictureIdIdx]);
+        return Long.parseLong(checkedRawDataAccess(pictureIdIdx));
     }
 
-    public String getTitle() {
-        return rawPicture[pictureTitleIdx];
+    public String selectTitle() {
+        return checkedRawDataAccess(pictureTitleIdx);
     }
 
-    public URL getUrl() throws MalformedURLException {
-        return new URL(rawPicture[pictureUrlIdx]);
+    public URL selectUrl() throws MalformedURLException {
+        return new URL(checkedRawDataAccess(pictureUrlIdx));
     }
 
-    public float getLongitude() {
-        return Float.parseFloat(rawPicture[pictureLongitudeIdx]);
+    public float selectLongitude() {
+        return Float.parseFloat(checkedRawDataAccess(pictureLongitudeIdx));
     }
 
-    public float getLatitude() {
-        return Float.parseFloat(rawPicture[pictureLatitudeIdx]);
+    public float selectLatitude() {
+        return Float.parseFloat(checkedRawDataAccess(pictureLatitudeIdx));
     }
 
-    public Date getDate() {
+    public Date selectDate() {
         try {
-            return dateFormat.parse(rawPicture[pictureDateIdx]);
+            return dateFormat.parse(checkedRawDataAccess(pictureDateIdx));
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
 
-
     public Optional<Picture> convertToPicture() {
         try {
-            Picture picture = new Picture(selectId(), getUrl(), getDate(), getTitle(), getLongitude(), getLatitude());
+            Picture picture = new Picture(selectId(), selectUrl(), selectDate(), selectTitle(), selectLongitude(), selectLatitude());
             return Optional.of(picture);
         } catch (MalformedURLException e) {
             throw new RuntimeException(e);
         }
     }
 
-    public String convertToCsvRow(Picture picture) {
-
+    public void updateRowFromPicture(Picture picture) {
+        rawPicture[pictureIdIdx]        = String.valueOf(picture.getId());
+        rawPicture[pictureUrlIdx]       = picture.getUrl().toString();
+        rawPicture[pictureTitleIdx]     = picture.getTitle();
+        rawPicture[pictureLongitudeIdx] = String.valueOf(picture.getLongitude());
+        rawPicture[pictureLatitudeIdx]  = String.valueOf(picture.getLatitude());
+        rawPicture[pictureDateIdx]      = dateFormat.format(picture.getDate());
     }
 
-    public void setRow(String[] split) {
-
+    private String checkedRawDataAccess(int idx) {
+        if (rawPicture == null) {
+            throw new IllegalStateException("Raw data not set");
+        }
+        return rawPicture[idx];
     }
-
 
     public static RawPictureProjection create(final DateFormat dateFormat, final List<String> header) {
         int readPictureIdIdx = header.indexOf("id");
-        int readPictureDescriptionIdx = header.indexOf("description");
+        int readPictureUrlIdx = header.indexOf("url");
         int readPictureTitleIdx = header.indexOf("title");
-        int readPictureFilenameIdx = header.indexOf("filename");
         int readPictureLongitudeIdx = header.indexOf("longitude");
         int readPictureLatitudeIdx = header.indexOf("latitude");
         int readPictureDateIdx = header.indexOf("date");
 
-        return new RawPictureProjection(dateFormat, readPictureIdIdx, readPictureDescriptionIdx, readPictureTitleIdx, readPictureFilenameIdx, readPictureLongitudeIdx, readPictureLatitudeIdx, readPictureDateIdx);
+        return new RawPictureProjection(dateFormat, readPictureIdIdx, readPictureUrlIdx, readPictureTitleIdx, readPictureLongitudeIdx, readPictureLatitudeIdx, readPictureDateIdx);
     }
 }
