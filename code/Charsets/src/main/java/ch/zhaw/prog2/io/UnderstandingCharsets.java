@@ -19,13 +19,12 @@ public class UnderstandingCharsets {
          * https://docs.oracle.com/javase/8/docs/api/java/nio/charset/Charset.html
          */
 
-        // ToDo: Print default character set
+        System.out.println("Default charset: " + Charset.defaultCharset());
 
-
-        // Todo: Print all available character sets
-
-
-
+        System.out.println("Available charsets:");
+        for (String charset : Charset.availableCharsets().keySet()) {
+            System.out.println(charset);
+        }
         /* Ende Teilaufgabe a */
 
 
@@ -41,9 +40,21 @@ public class UnderstandingCharsets {
          * Öffnen Sie die Dateien anschliessend mit einem HEX-Editor und vergleichen Sie.
          */
 
+        File defaultFile = new File("./CharSetEvaluation_Default.txt");
+        File usAsciiFile = new File("./CharSetEvaluation_ASCII.txt");
 
-
-
+        try (OutputStreamWriter defaultWriter = new OutputStreamWriter(new FileOutputStream(defaultFile), Charset.defaultCharset());
+             OutputStreamWriter asciiWriter = new OutputStreamWriter(new FileOutputStream(usAsciiFile), StandardCharsets.US_ASCII))
+        {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(System.in));
+            char c;
+            while ((c = (char) reader.read()) != 'q') {
+                defaultWriter.write(c);
+                asciiWriter.write(c);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
     }
 }
 

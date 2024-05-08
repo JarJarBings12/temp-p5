@@ -1,0 +1,4 @@
+Die Bedeutung von RWX auf Verzeichnissen:
+Read    - Der Benutzer/Gruppe kann den Inhalt des Verzeichnisses sehen.
+Write   - Der Benutzer/Gruppe kann Dateien im Verzeichnis erstellen, löschen und umbenennen.
+Execute - Der Benutzer/Gruppe kann in das Verzeichnis wechseln und Dateien darin ausführen.
