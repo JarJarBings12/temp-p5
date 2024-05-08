@@ -8,6 +8,7 @@ import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.*;
 import java.util.function.BiFunction;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -29,7 +30,7 @@ public class FilePictureDatasource implements PictureDatasource {
     protected static final String DATE_FORMAT = "yyyy-MM-dd HH:mm:ss";
 
     private final DateFormat dateFormat = new SimpleDateFormat(DATE_FORMAT);
-    private final File filePath;
+    private final File databaseFile;
 
     /**
      * Creates the FilePictureDatasource object with the given file path as datafile.
@@ -40,7 +41,7 @@ public class FilePictureDatasource implements PictureDatasource {
      * @throws IOException if accessing or creating the file fails
      */
     public FilePictureDatasource(String filepath) throws IOException {
-        this.filePath = new File(filepath);
+        this.databaseFile = new File(filepath);
     }
 
 
@@ -52,12 +53,14 @@ public class FilePictureDatasource implements PictureDatasource {
         Objects.requireNonNull(picture, "picture must not be null");
 
         try {
-            final File parent = new File(filePath.getParent());
+            final File parent = new File(databaseFile.getParent());
             final File tempFile = Files.createTempFile(parent.toPath(), "db-", ".tmp").toFile();
 
+            LOGGER.finer("Opening db file at '%s'".formatted(databaseFile));
+            LOGGER.finer("Opening temp file at '%s'".formatted(tempFile));
             try (FileOutputStream oldFileReader = new FileOutputStream(tempFile);
                  BufferedWriter bufferedWriter = new BufferedWriter(new FileWriter(tempFile, true))) {
-                Files.copy(filePath.toPath(), oldFileReader);
+                Files.copy(databaseFile.toPath(), oldFileReader);
 
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
                 projection.setRow(new String[HEADER_COLUMNS.size()]);
@@ -67,10 +70,14 @@ public class FilePictureDatasource implements PictureDatasource {
 
                 bufferedWriter.write(String.join(DELIMITER, projection.getRow()));
                 bufferedWriter.write(System.lineSeparator());
+            } finally {
+                LOGGER.finer("Closing db file...");
+                LOGGER.finer("Closing temp file...");
             }
-            replaceFile(filePath, tempFile);
-        } catch (IOException e) {
-            throw new DatasourceException("Error while inserting record", e);
+            replaceFile(databaseFile, tempFile);
+        } catch (IOException ex) {
+            LOGGER.log(Level.SEVERE, "An error occurred while inserting entry.", ex);
+            throw new DatasourceException("Error while inserting record", ex);
         }
     }
 
@@ -82,11 +89,11 @@ public class FilePictureDatasource implements PictureDatasource {
         Objects.requireNonNull(picture, "picture must not be null");
 
         try {
-            final File parent = new File(filePath.getParent());
+            final File parent = new File(databaseFile.getParent());
             final File tempFile = Files.createTempFile(parent.toPath(), "db-", ".tmp").toFile();
 
             boolean didPredicateMatch;
-            try (BufferedReader reader = new BufferedReader(new FileReader(filePath));
+            try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
 
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
@@ -94,24 +101,31 @@ public class FilePictureDatasource implements PictureDatasource {
                 // The Method copyWhile returns the result of the last predicate invocation.
                 // This means if predicateDidNotMatch is true, we didn't find the record to update and if it's false
                 // we found the record.
+                LOGGER.fine("Copy while looking for id '%d'".formatted(picture.getId()));
                 didPredicateMatch = !copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
                 if (didPredicateMatch) {
+                    LOGGER.fine("Found id '%d'; Updating entry and writing it back into the data file.");
                     projection.updateRowFromPicture(picture);
                     writer.write(String.join(DELIMITER, projection.getRow()));
                     writer.write(System.lineSeparator());
+                    LOGGER.fine("Transferring left over data.");
                     reader.transferTo(writer);
                 }
+            } finally {
+                LOGGER.finer("Closing db file...");
+                LOGGER.finer("Closing temp file...");
             }
 
             if (didPredicateMatch) {
-                replaceFile(filePath, tempFile);
+                replaceFile(databaseFile, tempFile);
             } else {
                 if (!tempFile.delete())
                     LOGGER.warning("Couldn't delete temp file: " + tempFile);
                 throw new RecordNotFoundException("Record not found: " + picture.getId());
             }
-        } catch (IOException e) {
-            throw new DatasourceException("Error while updating record", e);
+        } catch (IOException ex) {
+            LOGGER.log(Level.SEVERE, "An exception occurred while updating record.");
+            throw new DatasourceException("Error while updating record", ex);
         }
     }
 
@@ -123,29 +137,39 @@ public class FilePictureDatasource implements PictureDatasource {
         Objects.requireNonNull(picture, "picture must not be null");
 
         try {
-            final File parent = new File(filePath.getParent());
+            final File parent = new File(databaseFile.getParent());
             final File tempFile = Files.createTempFile(parent.toPath(), "db-", ".tmp").toFile();
 
             boolean didPredicateMatch;
-            try (BufferedReader reader = new BufferedReader(new FileReader(filePath));
+            LOGGER.finer("Opening db file at '%s'".formatted(databaseFile));
+            LOGGER.finer("Opening temp file at '%s'".formatted(tempFile));
+            try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
 
+                LOGGER.fine("Copy while looking for id '%d'.".formatted(picture.getId()));
                 didPredicateMatch = !copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
                 if (didPredicateMatch) {
+                    LOGGER.fine("Found id '%s'. Transferring left over data.".formatted(picture.getId()));
                     reader.transferTo(writer);
                 }
+            } finally {
+                LOGGER.finer("Closing db file...");
+                LOGGER.finer("Closing temp file...");
             }
 
             if (didPredicateMatch) {
-                replaceFile(filePath, tempFile);
+                LOGGER.info("Renaming '%s' to '%s'".formatted(tempFile, databaseFile));
+                replaceFile(databaseFile, tempFile);
             } else {
+                LOGGER.info("Couldn't find id '%d'. Deleting temp file...".formatted(picture.getId()));
                 if (!tempFile.delete())
                     LOGGER.warning("Couldn't delete temp file: " + tempFile);
                 throw new RecordNotFoundException("Record not found: " + picture.getId());
             }
-        } catch (IOException e) {
-            throw new DatasourceException("Error while deleting record", e);
+        } catch (IOException ex) {
+            LOGGER.log(Level.SEVERE, "An exception occurred while trying to delete record", ex);
+            throw new DatasourceException("Error while deleting record", ex);
         }
 
     }
@@ -185,12 +209,16 @@ public class FilePictureDatasource implements PictureDatasource {
     @Override
     public long count() {
         long count = 0;
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        LOGGER.finer("Opening db file at '%s'".formatted(databaseFile));
+        try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile))) {
             while (reader.readLine() != null) {
                 count++;
             }
-        } catch (IOException e) {
-            throw new DatasourceException("Error while counting records", e);
+        } catch (IOException ex) {
+            LOGGER.log(Level.SEVERE, "Failed to process db file", ex);
+            throw new DatasourceException("Error while counting records", ex);
+        } finally {
+            LOGGER.finer("Closing db file...");
         }
         return count;
     }
@@ -200,7 +228,8 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public Optional<Picture> findById(long id) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        LOGGER.finer("Opening db file at '%s'".formatted(databaseFile));
+        try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile))) {
             final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
 
             Picture picture = null;
@@ -213,8 +242,11 @@ public class FilePictureDatasource implements PictureDatasource {
                 line = reader.readLine();
             }
             return Optional.ofNullable(picture);
-        } catch (IOException e) {
-            throw new DatasourceException("Error while reading records", e);
+        } catch (IOException ex) {
+            LOGGER.log(Level.SEVERE, "Failed to process db file", ex);
+            throw new DatasourceException("Error while reading records", ex);
+        } finally {
+            LOGGER.finer("Closing db file...");
         }
     }
 
@@ -223,7 +255,7 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public Collection<Picture> findAll() {
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile))) {
             final RawPictureProjection projector = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
 
             ArrayList<Picture> pictures = new ArrayList<>();
@@ -242,18 +274,20 @@ public class FilePictureDatasource implements PictureDatasource {
     }
 
     private void replaceFile(File original, File newFile) {
+        LOGGER.fine("Deleting original file.");
         if (!original.delete()) {
             LOGGER.severe("Couldn't delete original file: " + original);
             throw new IllegalStateException("Couldn't delete file: " + original);
         }
+        LOGGER.fine("Renaming '%s' to '%s'".formatted(newFile, original));
         if (!newFile.renameTo(original)) {
             LOGGER.severe("Couldn't rename file: %s to %s!%n".formatted(newFile, original));
-            throw new IllegalStateException("Couldn't rename file: " + newFile + " to " + original);
+            throw new IllegalStateException("Couldn't rename file: '%s' to '%s'".formatted(newFile, original));
         }
     }
 
     private long getHighestId() {
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile))) {
             final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
 
             String line = reader.readLine();
@@ -276,7 +310,7 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public Collection<Picture> findByPosition(float longitude, float latitude, float deviation) {
-        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(databaseFile))) {
             List<Picture> results = new ArrayList<>();
 
             final RawPictureProjection projection = RawPictureProjection.create(dateFormat, HEADER_COLUMNS);
