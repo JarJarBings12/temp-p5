@@ -82,20 +82,35 @@ public class FilePictureDatasource implements PictureDatasource {
         Objects.requireNonNull(picture, "picture must not be null");
 
         try {
-            final File tempFile = Files.createTempFile(filePath.toPath(), "db-", ".tmp").toFile();
+            final File parent = new File(filePath.getParent());
+            parent.mkdirs();
+            final File tempFile = Files.createTempFile(parent.toPath(), "db-", ".tmp").toFile();
 
+            boolean didPredicateMatch;
             try (BufferedReader reader = new BufferedReader(new FileReader(filePath));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
                 List<String> header = readHeader(reader);
 
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, header);
-                copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
-                projection.updateRowFromPicture(picture);
-
-                writer.write(String.join(DELIMITER, projection.getRow()));
-                reader.transferTo(writer);
+                // predicateDidNotMatch is the best name I could come up with.
+                // The Method copyWhile returns the result of the last predicate invocation.
+                // This means if predicateDidNotMatch is true, we didn't find the record to update and if it's false
+                // we found the record.
+                didPredicateMatch = !copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
+                if (didPredicateMatch) {
+                    projection.updateRowFromPicture(picture);
+                    writer.write(String.join(DELIMITER, projection.getRow()));
+                    writer.write(System.lineSeparator());
+                    reader.transferTo(writer);
+                }
             }
-            replaceFile(filePath, tempFile);
+
+            if (didPredicateMatch) {
+                replaceFile(filePath, tempFile);
+            } else {
+                tempFile.delete();
+                throw new RecordNotFoundException("Record not found: " + picture.getId());
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -110,20 +125,32 @@ public class FilePictureDatasource implements PictureDatasource {
         Objects.requireNonNull(picture, "picture must not be null");
 
         try {
-            final File tempFile = Files.createTempFile(filePath.toPath(), "db-", ".tmp").toFile();
+            final File parent = new File(filePath.getParent());
+            parent.mkdirs();
+            final File tempFile = Files.createTempFile(parent.toPath(), "db-", ".tmp").toFile();
 
+            boolean foundTarget;
             try (BufferedReader reader = new BufferedReader(new FileReader(filePath));
                  BufferedWriter writer = new BufferedWriter(new FileWriter(tempFile))) {
                 List<String> header = readHeader(reader);
                 final RawPictureProjection projection = RawPictureProjection.create(dateFormat, header);
 
-                copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
-                reader.transferTo(writer);
+                foundTarget = copyWhile(reader, writer, projection, picture.getId(), (p, id) -> p.selectId() != id);
+                if (foundTarget) {
+                    reader.transferTo(writer);
+                }
             }
-            replaceFile(filePath, tempFile);
+
+            if (foundTarget) {
+                replaceFile(filePath, tempFile);
+            } else {
+                tempFile.delete();
+                throw new RecordNotFoundException("Record not found: " + picture.getId());
+            }
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
+
     }
 
     /**
@@ -137,20 +164,21 @@ public class FilePictureDatasource implements PictureDatasource {
      * @param predicate to determine when to stop copying
      * @param <T> type of the state
      */
-    private <T> void copyWhile(BufferedReader reader, BufferedWriter writer, RawPictureProjection projection, T state, BiFunction<RawPictureProjection, T, Boolean> predicate) {
+    private <T> boolean copyWhile(BufferedReader reader, BufferedWriter writer, RawPictureProjection projection, T state, BiFunction<RawPictureProjection, T, Boolean> predicate) {
         try {
+            boolean foundEntry = true;
             String line = reader.readLine();
-            while (line != null) {
+            while (line != null && foundEntry) {
                 final String[] rawRow = line.split(DELIMITER);
 
                 projection.setRow(rawRow);
-                if (predicate.apply(projection, state)) {
-                    break;
-                } else {
+                foundEntry = predicate.apply(projection, state);
+                if (foundEntry) {
                     writer.write(line);
+                    line = reader.readLine();
                 }
-                line = reader.readLine();
             }
+            return foundEntry;
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -162,8 +190,15 @@ public class FilePictureDatasource implements PictureDatasource {
      */
     @Override
     public long count() {
-        // ToDo: Correct Implementation
-        return 0;
+        long count = 0;
+        try (BufferedReader reader = new BufferedReader(new FileReader(filePath))) {
+            while (reader.readLine() != null) {
+                count++;
+            }
+        } catch (IOException e) {
+            throw new RuntimeException(e);
+        }
+        return count;
     }
 
     /**
